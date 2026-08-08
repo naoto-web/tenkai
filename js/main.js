@@ -1,0 +1,425 @@
+/* ===========================================================
+   main.js — 起動・描画・イベント結線
+   =========================================================== */
+
+(function () {
+
+  var stageEl, ridersEl, barsEl, panelEl, hintEl;
+  var inputEl, applyBtn, resetBtn, sizeRange, sizeVal;
+  var venueSel, raceSel, reloadBtn;
+  var titleEl, titleMainEl, titleSubEl, dirEl;
+  var pendingRace = null;   // URLで指定されたレース（出走表の取得完了後に適用する）
+  var riderEls = {};   // { 1: HTMLElement, ... }
+
+  /* ---------- 描画 ---------- */
+
+  /** 1台の位置を反映する（dataset にも持たせてドラッグの基準にする） */
+  function applyPosition(no, x, y) {
+    var el = riderEls[no];
+    if (!el) return;
+    el.dataset.x = String(x);
+    el.dataset.y = String(y);
+    el.style.left = (x * 100) + '%';
+    el.style.top = (y * 100) + '%';
+  }
+
+  /** ステージを残りスペースいっぱいに広げる。
+      以前は16:9で固定していたが、それだと高さが上限になって横が余っていた。
+      座標はすべて正規化（0..1）なので、縦横比が変わっても配置はそのまま成立する。
+      ※OBSに載せるときは、クロップ後にウィンドウサイズを固定すること */
+  function fitStage() {
+    var wrap = stageEl.parentElement;
+    if (!wrap) return;
+    var w = wrap.clientWidth;
+    var h = wrap.clientHeight;
+    if (!w || !h) return;
+
+    stageEl.style.width  = w + 'px';
+    stageEl.style.height = h + 'px';
+    /* 見出し・進行方向ラベルの文字サイズがステージ高に追従できるように渡す */
+    stageEl.style.setProperty('--stage-w', w + 'px');
+    stageEl.style.setProperty('--stage-h', h + 'px');
+  }
+
+  /** アイコン径を実ピクセルで決める */
+  function applyIconSize() {
+    fitStage();
+    var px = Math.round(CONFIG.iconPx(stageEl.clientWidth, stageEl.clientHeight, State.data.iconRatio));
+    stageEl.style.setProperty('--icon-px', px + 'px');
+    Bars.sync();   // 連結バーの太さ・座標もステージサイズに連動する
+  }
+
+  /** 状態を丸ごと画面に反映する */
+  function render() {
+    var d = State.data;
+
+    for (var no = 1; no <= CONFIG.MAX_CAR; no++) {
+      var el = riderEls[no];
+      if (!el) continue;
+      /* 出走している車番だけ出す。6車立て・欠車もこれで正しく消える */
+      var visible = (d.cars.indexOf(no) !== -1);
+      el.classList.toggle('is-hidden', !visible);
+      if (visible) {
+        applyPosition(no, d.riders[no].x, d.riders[no].y);
+        Icons.setName(el, d.names[no] || '');
+        Icons.setDirection(el, d.dir);
+      }
+    }
+
+    stageEl.dataset.bg = d.bg;
+    stageEl.dataset.names = d.showNames;
+    stageEl.dataset.dir = d.dir;
+
+    titleMainEl.textContent = d.titleMain || '';
+    titleSubEl.textContent = d.titleSub || '';
+    titleEl.classList.toggle('is-empty', !d.titleMain);
+
+    /* 先頭がどちら側かを、ラベルの中身と置き場所の両方で示す */
+    dirEl.textContent = (d.dir === 'right') ? '先頭 ▶' : '◀ 先頭';
+    Bars.rebuild();
+    applyIconSize();
+    syncControls();
+  }
+
+  /** コントロールの表示状態を state に合わせる */
+  function syncControls() {
+    var d = State.data;
+
+    sizeRange.value = String(Math.round(d.iconRatio * 1000));
+    sizeVal.textContent = (d.iconRatio * 100).toFixed(1) + '%';
+
+    if (document.activeElement !== inputEl) inputEl.value = d.lineupText;
+  }
+
+  function setHint(text, isWarn) {
+    hintEl.textContent = text;
+    hintEl.classList.toggle('is-warn', !!isWarn);
+  }
+
+  /* ---------- 並びの適用 ---------- */
+
+  /** ラインに出てくる車番＝盤面に出す車番 */
+  function carsFromLines(lines) {
+    var out = [];
+    (lines || []).forEach(function (line) {
+      line.forEach(function (no) { if (out.indexOf(no) === -1) out.push(no); });
+    });
+    out.sort(function (a, b) { return a - b; });
+    return out;
+  }
+
+  function applyLineup() {
+    var text = inputEl.value;
+    var d = State.data;
+
+    if (!Lineup.normalize(text)) {
+      setHint('並びを入力してください。例）1-3-5 / 2-7 / 4-6-9', true);
+      return;
+    }
+
+    /* 出走表を読み込み済みなら、そのレースに存在する車番だけ受け付ける。
+       検証の母集合は raceCars（今の表示 cars ではない）。
+       cars で検証すると、一度並びから外して消えた車番を書き戻せなくなる */
+    var pool = (d.raceCars && d.raceCars.length) ? d.raceCars : null;
+    var result = Lineup.apply(text, pool, d.dir, d.iconRatio);
+
+    State.set({
+      lineupText: text,
+      lines: result.lines,
+      cars: carsFromLines(result.lines)   // 並びに書かれた車番だけを盤面に出す
+    });
+    State.setRiders(result.positions);
+    render();
+
+    /* 結果の要約を出す */
+    var shown = result.lines.map(function (l) { return l.join('-'); }).join(' / ');
+    var msg = '配置しました： ' + shown;
+    var warn = false;
+
+    if (result.missing.length) {
+      msg += '　／ 並びに無い ' + result.missing.join('・') + ' 番は盤面に出していません';
+      warn = true;
+    }
+    if (result.ignored.length) {
+      var uniq = result.ignored.filter(function (v, i, a) { return a.indexOf(v) === i; });
+      msg += '　／ ' + uniq.join('・') + ' 番は重複または出走していないので無視しました';
+      warn = true;
+    }
+    setHint(msg, warn);
+  }
+
+  /* ---------- 出走表（レース選択） ---------- */
+
+  function populateVenues() {
+    var vs = RaceCard.venues();
+    venueSel.innerHTML = '';
+
+    if (!vs.length) {
+      venueSel.appendChild(new Option('（開催なし）', ''));
+      venueSel.disabled = true;
+      raceSel.disabled = true;
+      return;
+    }
+
+    vs.forEach(function (v) {
+      venueSel.appendChild(new Option(v.name + (v.grade ? '（' + v.grade + '）' : ''), v.joCode));
+    });
+    venueSel.disabled = false;
+
+    var want = State.data.sel.joCode;
+    if (want && RaceCard.findVenue(want)) venueSel.value = want;
+    populateRaces();
+  }
+
+  function populateRaces() {
+    var v = RaceCard.findVenue(venueSel.value);
+    raceSel.innerHTML = '';
+
+    if (!v || !v.races || !v.races.length) { raceSel.disabled = true; return; }
+
+    v.races.forEach(function (r) {
+      /* 並びが未公開のレースはその場で分かるよう印を付ける */
+      var label = r.no + 'R ' + (r.start || '') + (r.narabi ? '' : '  ※並び未');
+      raceSel.appendChild(new Option(label, r.no));
+    });
+    raceSel.disabled = false;
+
+    var want = State.data.sel.raceNo;
+    if (want && RaceCard.findRace(v, want)) raceSel.value = String(want);
+  }
+
+  function loadTimetable(refresh) {
+    if (!RaceCard.enabled()) {
+      setHint('出走表の取得先が未設定です（js/config.js の GAS_URL）。並びの手入力だけで使えます。', true);
+      return;
+    }
+    setHint('出走表を取得しています…');
+    reloadBtn.disabled = true;
+
+    RaceCard.fetchTimetable(refresh).then(function (tt) {
+      populateVenues();
+
+      /* URLでレースを指定されていたら、ここで初めて適用できる */
+      if (pendingRace) {
+        var pv = RaceCard.findVenue(pendingRace.jo);
+        if (pv && RaceCard.findRace(pv, pendingRace.race)) {
+          venueSel.value = pendingRace.jo;
+          populateRaces();
+          raceSel.value = String(pendingRace.race);
+          pendingRace = null;
+          applySelectedRace();
+          return;
+        }
+        pendingRace = null;
+      }
+
+      var races = 0;
+      RaceCard.venues().forEach(function (v) { races += v.races.length; });
+      setHint('出走表を取得しました（' + (tt && tt.date ? tt.date : '') + '・' +
+              RaceCard.venues().length + '場 ' + races + 'レース）。場とレースを選ぶと並びと選手名が入ります。');
+    }).catch(function (e) {
+      setHint('出走表の取得に失敗しました：' + ((e && e.message) || e) +
+              '　※file:// で開いている場合はブラウザのCORS制限の可能性があります', true);
+    }).then(function () {
+      reloadBtn.disabled = false;
+    });
+  }
+
+  /** 選んだレースの並び・選手名・車立てを盤面に反映する */
+  function applySelectedRace() {
+    var v = RaceCard.findVenue(venueSel.value);
+    var r = RaceCard.findRace(v, raceSel.value);
+    if (!v || !r) return;
+
+    var raceCars = RaceCard.carsOf(r);
+
+    State.set({
+      sel: { joCode: String(v.joCode), raceNo: +r.no },
+      raceCars: raceCars,
+      names: RaceCard.namesOf(r),
+      titleMain: v.name + ' ' + r.no + 'R',
+      titleSub: [v.grade, r.cls, r.lineType].filter(Boolean).join('・')
+    });
+
+    if (r.narabi) { applyRaceNarabi(r.narabi, v, r); return; }
+
+    /* タイムテーブル側に並びが無いレースがある（本日は72中14）。保険経路を叩く */
+    showAllRaceCars(raceCars);
+    setHint(RaceCard.labelOf(v, r) + '：並び予想が未公開です。別経路で取得を試みています…');
+    RaceCard.fetchNarabi(v.joCode, r.no).then(function (nb) {
+      if (nb) { applyRaceNarabi(nb, v, r); return; }
+      setHint(RaceCard.labelOf(v, r) +
+              '：並び予想がまだ出ていません。出走選手を横一列に並べたので、並び欄に手で入力してください。', true);
+    });
+  }
+
+  /** 並びがまだ無いとき用。ライン無しで出走選手を横一列に置くだけ */
+  function showAllRaceCars(raceCars) {
+    var d = State.data;
+    var solo = raceCars.map(function (no) { return [no]; });
+    State.set({ lineupText: '', lines: [], cars: raceCars.slice() });
+    State.setRiders(Lineup.layout(solo, d.dir, d.iconRatio));
+    render();
+  }
+
+  function applyRaceNarabi(narabi, v, r) {
+    var d = State.data;
+    var pool = (d.raceCars && d.raceCars.length) ? d.raceCars : null;
+    var result = Lineup.apply(narabi, pool, d.dir, d.iconRatio);
+
+    State.set({
+      lineupText: narabi,
+      lines: result.lines,
+      cars: carsFromLines(result.lines)
+    });
+    State.setRiders(result.positions);
+    render();
+
+    var msg = RaceCard.labelOf(v, r) + ' → 並び ' + narabi;
+    if (result.missing.length) {
+      msg += '　／ 並びに無い ' + result.missing.join('・') + ' 番は盤面に出していません';
+    }
+    setHint(msg, result.missing.length > 0);
+  }
+
+  /* ---------- 初期化 ---------- */
+
+  function buildRiders() {
+    ridersEl.innerHTML = '';
+    for (var no = 1; no <= CONFIG.MAX_CAR; no++) {
+      var el = Icons.create(no);
+      ridersEl.appendChild(el);
+      riderEls[no] = el;
+
+      Drag.enable(stageEl, el, {
+        onMove: function (n, x, y) {
+          State.moveRider(n, x, y);
+          applyPosition(n, State.data.riders[n].x, State.data.riders[n].y);
+          Bars.sync();   // 1台だけ動かしたら連結バーが折れて追従する
+        },
+        onEnd: function () {
+          State.save();
+        }
+      });
+    }
+  }
+
+  function bindControls() {
+    applyBtn.addEventListener('click', applyLineup);
+
+    venueSel.addEventListener('change', function () {
+      populateRaces();
+      applySelectedRace();
+    });
+    raceSel.addEventListener('change', applySelectedRace);
+    reloadBtn.addEventListener('click', function () { loadTimetable(true); });
+
+    inputEl.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter') { ev.preventDefault(); applyLineup(); }
+    });
+
+    sizeRange.addEventListener('input', function () {
+      var ratio = parseInt(sizeRange.value, 10) / 1000;
+      State.set({ iconRatio: ratio });
+      applyIconSize();
+      sizeVal.textContent = (ratio * 100).toFixed(1) + '%';
+    });
+
+    resetBtn.addEventListener('click', function () {
+      State.reset();
+      inputEl.value = '';
+      render();
+      setHint('初期配置に戻しました。');
+    });
+
+    window.addEventListener('resize', applyIconSize);
+  }
+
+  /**
+   * URLパラメータで初期状態を指定できるようにする。
+   * 例）index.html?narabi=1-3-5/2-7/4-6-9&cars=9&dir=right&bg=green&panel=0
+   * OBSのブラウザソースやstagekit統合のときに効いてくる。
+   */
+  function applyUrlParams() {
+    var q;
+    try { q = new URLSearchParams(location.search); } catch (e) { return; }
+
+    /* 背景だけは残してある。OBSでクロマキー合成したいときの逃げ道 */
+    var bg = q.get('bg');
+    if (bg === 'green' || bg === 'normal') State.set({ bg: bg });
+
+    var size = parseFloat(q.get('size'));
+    if (isFinite(size)) {
+      State.set({ iconRatio: State.clamp(size / 100, CONFIG.ICON_RATIO_MIN, CONFIG.ICON_RATIO_MAX) });
+    }
+
+    var narabi = q.get('narabi');
+    if (narabi) {
+      var d = State.data;
+      var pool = (d.raceCars && d.raceCars.length) ? d.raceCars : null;
+      var result = Lineup.apply(narabi, pool, d.dir, d.iconRatio);
+      State.set({
+        lineupText: narabi,
+        lines: result.lines,
+        cars: carsFromLines(result.lines)
+      });
+      State.setRiders(result.positions);
+    }
+
+    /* 場コード＋レース番号でレースを直接指定する（OBSのブラウザソース用） */
+    var jo = q.get('jo');
+    var rno = parseInt(q.get('race'), 10);
+    if (jo && rno) pendingRace = { jo: String(jo), race: rno };
+
+    if (q.get('panel') === '0') panelEl.style.display = 'none';
+  }
+
+  function init() {
+    stageEl   = document.getElementById('stage');
+    ridersEl  = document.getElementById('riders');
+    barsEl    = document.getElementById('line-bars');
+    panelEl   = document.getElementById('panel');
+    hintEl    = document.getElementById('hint');
+    inputEl   = document.getElementById('lineup-input');
+    applyBtn  = document.getElementById('apply-btn');
+    resetBtn  = document.getElementById('reset-btn');
+    sizeRange = document.getElementById('size-range');
+    sizeVal   = document.getElementById('size-val');
+    venueSel  = document.getElementById('venue-select');
+    raceSel   = document.getElementById('race-select');
+    reloadBtn = document.getElementById('reload-btn');
+    titleEl     = document.getElementById('stage-title');
+    titleMainEl = document.getElementById('stage-title-main');
+    titleSubEl  = document.getElementById('stage-title-sub');
+    dirEl       = document.getElementById('stage-dir');
+
+    sizeRange.min = String(Math.round(CONFIG.ICON_RATIO_MIN * 1000));
+    sizeRange.max = String(Math.round(CONFIG.ICON_RATIO_MAX * 1000));
+
+    /* 連結バーをドラッグしたとき、動いた分の丸の位置を反映して返すための橋渡し */
+    Bars.init(stageEl, barsEl, function (nos) {
+      nos.forEach(function (no) {
+        applyPosition(no, State.data.riders[no].x, State.data.riders[no].y);
+      });
+    });
+
+    State.load();
+    buildRiders();
+    bindControls();
+    applyUrlParams();
+    render();
+
+    /* レイアウト確定後にもう一度だけアイコン径を合わせる */
+    requestAnimationFrame(applyIconSize);
+
+    /* 出走表は非同期で追いかける。取得できるまでは手入力で普通に使える。
+       起動時は選択を復元するだけで、盤面には自動適用しない（前回の配置を消さないため） */
+    loadTimetable(false);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
