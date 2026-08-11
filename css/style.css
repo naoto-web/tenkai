@@ -167,6 +167,44 @@ html, body {
 }
 .hint.is-warn { color: #ffc46b; }
 
+/* 出力画面（ブラウザソース）と繋がっているか。C案が成立するかの判定そのもの */
+.live-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--ui-border);
+  white-space: nowrap;
+}
+.live-dot::before {
+  content: '';
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.live-dot[data-live="on"]  { color: #46d17f; background: rgba(70, 209, 127, .10); border-color: rgba(70, 209, 127, .40); }
+.live-dot[data-live="off"] { color: #ff7a7a; background: rgba(255, 122, 122, .10); border-color: rgba(255, 122, 122, .35); }
+.live-dot[data-live="na"]  { color: var(--ui-muted); }
+
+/* ===================== 出力ビュー（?view=output） =====================
+   OBSのブラウザソース用。操作UIを消して、盤面だけを画面いっぱいに出す。
+   背景を透明にしてあるので、OBS側で映像に重ねてもクロマキーが要らない */
+
+body.view-output {
+  background: transparent;
+  overflow: hidden;
+}
+body.view-output .panel { display: none; }
+body.view-output .app { padding: 0; }
+body.view-output .stage { border-radius: 0; }
+/* 出力側で掴めてしまうと操作側とズレるので、当たり判定を殺す */
+body.view-output .rider,
+body.view-output .line-bar-hit { pointer-events: none; }
+
 /* ===================== 表示エリア ===================== */
 
 /* 残りの高さを全部使い、その中で盤面を中央に置く */

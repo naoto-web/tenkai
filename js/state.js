@@ -139,7 +139,12 @@ var State = (function () {
     return data;
   }
 
+  /* 出力ビューは操作ビューと同じlocalStorageを共有してしまう（OBSでは同一プロファイル）。
+     出力側が書き戻すと操作側の保存を上書きして事故るので、書き込みを止められるようにする */
+  var persist = true;
+
   function save() {
+    if (!persist) return;
     try {
       localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(data));
     } catch (e) {
@@ -156,6 +161,9 @@ var State = (function () {
 
     load: load,
     save: save,
+
+    /** false にすると localStorage への書き込みを止める（出力ビュー用） */
+    setPersist: function (v) { persist = !!v; },
 
     onChange: function (fn) { listeners.push(fn); },
 

@@ -7,8 +7,13 @@
   var stageEl, ridersEl, barsEl, panelEl, hintEl;
   var inputEl, applyBtn, resetBtn, sizeRange, sizeVal;
   var venueSel, raceSel, reloadBtn;
-  var titleEl, titleMainEl, titleSubEl, dirEl;
+  var titleEl, titleMainEl, titleSubEl, dirEl, liveDot;
   var pendingRace = null;   // URLで指定されたレース（出走表の取得完了後に適用する）
+
+  /* 'control'＝操作画面（OBSのカスタムブラウザドックに入れる）
+     'output' ＝出力画面（OBSのブラウザソースに入れる）。?view=output で切り替える */
+  var VIEW = 'control';
+  var lastRemoteSig = '';   // 出力側で「構造が変わったか」を見るための署名
   var riderEls = {};   // { 1: HTMLElement, ... }
 
   /* ---------- 描画 ---------- */
@@ -76,6 +81,8 @@
 
     /* 先頭がどちら側かを、ラベルの中身と置き場所の両方で示す */
     dirEl.textContent = (d.dir === 'right') ? '先頭 ▶' : '◀ 先頭';
+
+    publishLive(true);
     Bars.rebuild();
     applyIconSize();
     syncControls();
@@ -146,6 +153,45 @@
       warn = true;
     }
     setHint(msg, warn);
+  }
+
+  /* ---------- 出力画面との同期（C案の検証部分） ---------- */
+
+  /** 操作側→出力側へ現状を流す。ドラッグ中に毎フレーム呼ばれるのでLive側で間引かれる */
+  function publishLive(force) {
+    if (VIEW === 'control') Live.publish(State.data, force);
+  }
+
+  /** 出力側：操作側から届いた状態を反映する。
+      構造（出走車・ライン・名前・見出し等）が変わったときだけ作り直し、
+      それ以外は座標だけ更新する。毎フレーム作り直すとライン帯がちらつくため */
+  function applyRemote(d) {
+    if (!d) return;
+    State.set(d);
+
+    var sig = JSON.stringify([d.cars, d.lines, d.names, d.titleMain, d.titleSub,
+                              d.dir, d.iconRatio, d.bg, d.showBars, d.showNames]);
+    if (sig !== lastRemoteSig) { lastRemoteSig = sig; render(); return; }
+
+    for (var no = 1; no <= CONFIG.MAX_CAR; no++) {
+      if (d.cars.indexOf(no) !== -1 && d.riders[no]) {
+        applyPosition(no, d.riders[no].x, d.riders[no].y);
+      }
+    }
+    Bars.sync();
+  }
+
+  /** 接続インジケータ。これが緑になればC案は成立、赤のままなら伝送路の作り直しが要る */
+  function updateLiveDot() {
+    if (!liveDot) return;
+    if (!Live.available()) {
+      liveDot.dataset.live = 'na';
+      liveDot.textContent = '同期不可（この環境）';
+      return;
+    }
+    var on = Live.isAlive();
+    liveDot.dataset.live = on ? 'on' : 'off';
+    liveDot.textContent = on ? '出力：接続中' : '出力：未接続';
   }
 
   /* ---------- 出走表（レース選択） ---------- */
@@ -296,6 +342,7 @@
           State.moveRider(n, x, y);
           applyPosition(n, State.data.riders[n].x, State.data.riders[n].y);
           Bars.sync();   // 1台だけ動かしたら連結バーが折れて追従する
+          publishLive();
         },
         onEnd: function () {
           State.save();
@@ -375,6 +422,11 @@
   }
 
   function init() {
+    try {
+      if (new URLSearchParams(location.search).get('view') === 'output') VIEW = 'output';
+    } catch (e) {}
+    document.body.classList.add('view-' + VIEW);
+
     stageEl   = document.getElementById('stage');
     ridersEl  = document.getElementById('riders');
     barsEl    = document.getElementById('line-bars');
@@ -392,6 +444,7 @@
     titleMainEl = document.getElementById('stage-title-main');
     titleSubEl  = document.getElementById('stage-title-sub');
     dirEl       = document.getElementById('stage-dir');
+    liveDot     = document.getElementById('live-dot');
 
     sizeRange.min = String(Math.round(CONFIG.ICON_RATIO_MIN * 1000));
     sizeRange.max = String(Math.round(CONFIG.ICON_RATIO_MAX * 1000));
@@ -401,6 +454,16 @@
       nos.forEach(function (no) {
         applyPosition(no, State.data.riders[no].x, State.data.riders[no].y);
       });
+      publishLive();
+    });
+
+    /* 出力ビューは書き込まない。OBSではドックとブラウザソースが
+       同じlocalStorageを共有するため、出力側が書き戻すと操作側の保存を壊す */
+    if (VIEW === 'output') State.setPersist(false);
+
+    Live.init(VIEW, {
+      onState: applyRemote,                       // 出力側：届いた状態を描く
+      onHello: function () { publishLive(true); } // 操作側：出力が起動したら即座に追いつかせる
     });
 
     State.load();
@@ -409,12 +472,18 @@
     applyUrlParams();
     render();
 
+    if (VIEW === 'control') {
+      updateLiveDot();
+      setInterval(updateLiveDot, 1000);
+    }
+
     /* レイアウト確定後にもう一度だけアイコン径を合わせる */
     requestAnimationFrame(applyIconSize);
 
     /* 出走表は非同期で追いかける。取得できるまでは手入力で普通に使える。
-       起動時は選択を復元するだけで、盤面には自動適用しない（前回の配置を消さないため） */
-    loadTimetable(false);
+       起動時は選択を復元するだけで、盤面には自動適用しない（前回の配置を消さないため）。
+       出力ビューは操作側から状態が流れてくるので、自分では取りにいかない（GASへの無駄打ち防止） */
+    if (VIEW === 'control') loadTimetable(false);
   }
 
   if (document.readyState === 'loading') {
