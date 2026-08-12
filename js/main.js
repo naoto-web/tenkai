@@ -224,9 +224,11 @@
     if (!v || !v.races || !v.races.length) { raceSel.disabled = true; return; }
 
     v.races.forEach(function (r) {
-      /* 並びが未公開のレースはその場で分かるよう印を付ける */
-      var label = r.no + 'R ' + (r.start || '') + (r.narabi ? '' : '  ※並び未');
-      raceSel.appendChild(new Option(label, r.no));
+      /* 以前はタイムテーブル側の並びが空のとき「※並び未」と出していたが、
+         実際は保険経路（action=narabi）でほぼ取れるため警告として機能せず、
+         「全部＊並び未なのに選ぶと出る」という誤解を招いたので廃止した（8/12）。
+         取れたかどうかは、選んだ直後のヒント欄で正確に分かる */
+      raceSel.appendChild(new Option(r.no + 'R ' + (r.start || ''), r.no));
     });
     raceSel.disabled = false;
 
@@ -234,13 +236,19 @@
     if (want && RaceCard.findRace(v, want)) raceSel.value = String(want);
   }
 
-  function loadTimetable(refresh) {
+  /**
+   * @param {boolean} refresh GAS側のキャッシュも無視して取り直す
+   * @param {boolean} silent  定期再取得用。ヒント欄とボタンを触らない
+   */
+  function loadTimetable(refresh, silent) {
     if (!RaceCard.enabled()) {
-      setHint('出走表の取得先が未設定です（js/config.js の GAS_URL）。並びの手入力だけで使えます。', true);
+      if (!silent) setHint('出走表の取得先が未設定です（js/config.js の GAS_URL）。並びの手入力だけで使えます。', true);
       return;
     }
-    setHint('出走表を取得しています…');
-    reloadBtn.disabled = true;
+    if (!silent) {
+      setHint('出走表を取得しています…');
+      reloadBtn.disabled = true;
+    }
 
     RaceCard.fetchTimetable(refresh).then(function (tt) {
       populateVenues();
@@ -259,15 +267,17 @@
         pendingRace = null;
       }
 
+      if (silent) return;
       var races = 0;
       RaceCard.venues().forEach(function (v) { races += v.races.length; });
       setHint('出走表を取得しました（' + (tt && tt.date ? tt.date : '') + '・' +
               RaceCard.venues().length + '場 ' + races + 'レース）。場とレースを選ぶと並びと選手名が入ります。');
     }).catch(function (e) {
+      if (silent) return;
       setHint('出走表の取得に失敗しました：' + ((e && e.message) || e) +
               '　※file:// で開いている場合はブラウザのCORS制限の可能性があります', true);
     }).then(function () {
-      reloadBtn.disabled = false;
+      if (!silent) reloadBtn.disabled = false;
     });
   }
 
@@ -483,7 +493,14 @@
     /* 出走表は非同期で追いかける。取得できるまでは手入力で普通に使える。
        起動時は選択を復元するだけで、盤面には自動適用しない（前回の配置を消さないため）。
        出力ビューは操作側から状態が流れてくるので、自分では取りにいかない（GASへの無駄打ち防止） */
-    if (VIEW === 'control') loadTimetable(false);
+    if (VIEW === 'control') {
+      loadTimetable(false);
+      /* OBSのドックは開きっぱなしで使うので、1回しか取らないと確実に古くなる。
+         実際、深夜に開いたドックが「並びが1本も無い」時点のリストを持ち続けて
+         全レースが「並び未」に見える事故が起きた（8/12）。stagekitのオーバーレイに
+         合わせて10分ごとに取り直す。選択とヒント欄は壊さない（silent） */
+      setInterval(function () { loadTimetable(false, true); }, 10 * 60 * 1000);
+    }
   }
 
   if (document.readyState === 'loading') {
