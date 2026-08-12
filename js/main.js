@@ -272,9 +272,11 @@
       if (silent) return;
       var races = 0;
       RaceCard.venues().forEach(function (v) { races += v.races.length; });
-      setHint('出走表を取得しました（' + (tt && tt.date ? tt.date : '') + '・' +
+      setHint((CONFIG.IS_TEST_BACKEND ? '【テスト接続】' : '') +
+              '出走表を取得しました（' + (tt && tt.date ? tt.date : '') + '・' +
               RaceCard.venues().length + '場 ' + races + 'レース）。' +
-              (isFollowing() ? '配信のレースに自動で追従します。' : '場とレースを選ぶと並びと選手名が入ります。'));
+              (isFollowing() ? '配信のレースに自動で追従します。' : '場とレースを選ぶと並びと選手名が入ります。'),
+              CONFIG.IS_TEST_BACKEND);
     }).catch(function (e) {
       if (silent) return;
       setHint('出走表の取得に失敗しました：' + ((e && e.message) || e) +

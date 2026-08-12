@@ -4,6 +4,12 @@
 
 var CONFIG = (function () {
 
+  var PROD_GAS = 'https://script.google.com/macros/s/AKfycbw7I6ejxz4sy4RMXxc_2mhSxjzHaBrXwExv33_znFRvVfPjVsQSlVsJbh_fcnJ4lNkDVA/exec';
+  var override = '';
+  try { override = new URLSearchParams(location.search).get('gas') || ''; } catch (e) { override = ''; }
+  var GAS_OK = /^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(override);
+  var GAS_URL = GAS_OK ? override : PROD_GAS;
+
   /* 競輪の選手服の色（競技規則由来の業界標準）
      1白 2黒 3赤 4青 5黄 6緑 7橙 8桃 9紫
      bg = 円の色 / fg = 車番の文字色 / ring = 縁取り */
@@ -59,9 +65,19 @@ var CONFIG = (function () {
        それに乗り遅れない程度に短く取る。GASはオーバーレイが既に5秒で叩いている */
     FOLLOW_MS: 5000,
 
-    /* 出走表・並び予想の取得先。
+    /* 出走表・並び予想・配信中レースの取得先。
        OKL配信システム（stagekit）のGASバックエンドをそのまま読ませてもらっている。
-       読み取り専用（action=timetable / action=narabi）。空文字にすればレース選択UIごと無効になる。 */
-    GAS_URL: 'https://script.google.com/macros/s/AKfycbw7I6ejxz4sy4RMXxc_2mhSxjzHaBrXwExv33_znFRvVfPjVsQSlVsJbh_fcnJ4lNkDVA/exec'
+       読み取り専用（action=timetable / action=narabi / action=state）。
+
+       ?gas=<URL> でバックエンドを差し替えられる（stagekitのconfig.jsと同じ仕組み・同じ書式）。
+       テスト用コンソールで動作確認するときは、ドックのURLにも同じ ?gas= を付ける。
+       付けないと本番を見にいくので「テストで場を変えても盤面が追従しない」ことになる。
+
+       ⚠️script.google.com のURLしか受け付けない（任意ホストを許すと細工リンクの踏み台になる）。
+         このボードは読み取り専用で書き込みキーを持たないが、stagekit側と規則を揃えておく */
+    GAS_URL: GAS_URL,
+
+    /** テスト用バックエンドに繋いでいるか。取り違えが一番怖いので画面に出す */
+    IS_TEST_BACKEND: GAS_OK
   };
 })();
