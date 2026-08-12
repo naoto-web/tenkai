@@ -359,7 +359,9 @@
   function initConsoleChannel() {
     if (VIEW !== 'control' || typeof BroadcastChannel === 'undefined') return;
     try {
-      var ch = new BroadcastChannel('live-sync-v1');
+      /* ⚠️チャンネル名はバックエンドごとに分ける（stagekitのsync.jsと同じ規則）。
+         同名だとテストコンソールの通知が本番のボードにも届いてしまう */
+      var ch = new BroadcastChannel('live-sync-v1' + (CONFIG.IS_TEST_BACKEND ? '-test' : ''));
       ch.onmessage = function (ev) {
         var m = ev.data || {};
         if (m.type !== 'state' || !m.state) return;
