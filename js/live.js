@@ -47,6 +47,15 @@ var Live = (function () {
 
     /* 操作側 */
     if (m.type === 'pong') { lastPong = now(); return; }
+    if (m.type === 'want') {
+      /* 聞き専の購読者（stagekitの③レース展開オーバーレイ）が「今の状態をください」と
+         聞いてきた。このボードは render() のときしか状態を流さないので、
+         ドックを開いたまま放置していると後から起動した購読者は永久に何も受け取れない。
+         ⚠️lastPong は絶対に触らない＝これは出力ソースの生存判定であって、
+            聞き専の購読者が居ることを「出力が生きている」と誤認させてはいけない */
+      if (handlers.onWant) handlers.onWant();
+      return;
+    }
     if (m.type === 'hello') {
       /* 出力側が起動した。現状を即座に送って追いつかせる */
       lastPong = now();

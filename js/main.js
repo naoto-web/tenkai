@@ -497,8 +497,9 @@
     if (VIEW === 'output') State.setPersist(false);
 
     Live.init(VIEW, {
-      onState: applyRemote,                       // 出力側：届いた状態を描く
-      onHello: function () { publishLive(true); } // 操作側：出力が起動したら即座に追いつかせる
+      onState: applyRemote,                        // 出力側：届いた状態を描く
+      onHello: function () { publishLive(true); }, // 操作側：出力が起動したら即座に追いつかせる
+      onWant:  function () { publishLive(true); }  // 操作側：聞き専の購読者（③オーバーレイ）の求めに応じる
     });
 
     State.load();
