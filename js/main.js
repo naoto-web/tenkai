@@ -344,8 +344,22 @@
     showFollowDiff(sel);
   }
 
-  function followTick() {
+  /* 通知が届いている間はGASを読む回数を落とす（8/12）。
+     GASの実行枠はGoogleアカウント単位で、本番・テストの全オーバーレイが5秒ごとに叩いている。
+     ボードがもう1本5秒で叩くと混雑を押し上げ、コンソールの保存が失敗しやすくなる（実際に発生）。
+     通知が生きているならGASは保険でしかないので、間隔を大きく取る。
+     通知が来ていない環境では従来どおり短い間隔で回す＝遅れない */
+  var lastBcAt = 0;
+  function followDue(now) {
+    var bcAlive = lastBcAt && (now - lastBcAt) < 120000; // 直近2分に通知が来ていれば生きている
+    return bcAlive ? CONFIG.FOLLOW_MS_BC : CONFIG.FOLLOW_MS;
+  }
+  var lastFollowAt = 0;
+  function followTick(force) {
     if (!RaceCard.enabled()) return;
+    var now = Date.now();
+    if (!force && lastFollowAt && (now - lastFollowAt) < followDue(now)) return;
+    lastFollowAt = now;
     /* 追従OFF（?follow=0）でもコンソールは読む＝ズレていることを知らせるため */
     RaceCard.fetchConsoleRace().then(applyConsoleSel);
   }
@@ -365,6 +379,7 @@
       ch.onmessage = function (ev) {
         var m = ev.data || {};
         if (m.type !== 'state' || !m.state) return;
+        lastBcAt = Date.now();   // 通知が生きている＝GASの巡回は間隔を空けてよい
         applyConsoleSel(RaceCard.selFromState(m.state));
       };
     } catch (e) { /* 通知が使えなくても5秒巡回で追いつく */ }
@@ -467,7 +482,7 @@
       applySelectedRace();   // ⚠️addEventListenerに直接渡すとEventがauto扱いになるので包む
     });
     followChk.addEventListener('change', function () {
-      if (followChk.checked) { setHint('配信に追従します。'); showFollowDiff(null); followTick(); }
+      if (followChk.checked) { setHint('配信に追従します。'); showFollowDiff(null); followTick(true); }
       else setHint('追従を外しました。場とレースは手動のままになります。');
     });
     /* 警告そのものが復帰ボタン＝ズレに気づいた瞬間に1クリックで追い付ける */
