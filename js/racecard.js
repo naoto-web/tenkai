@@ -42,19 +42,22 @@ var RaceCard = (function () {
     if (!enabled()) return Promise.resolve(null);
     return fetch(CONFIG.GAS_URL + '?action=state', { redirect: 'follow' })
       .then(function (r) { return r.json(); })
-      .then(function (j) {
-        var s = j && j.ok && j.state;
-        if (!s || !s.venues || !s.venues.length) return null;
-        var v = s.venues[s.activeVenue || 0];
-        if (!v || !v.name) return null;
-        var no = +(s.currentRace || {})[v.name] || 0;
-        if (!no) return null;
-        /* コンソールは場を「名前」で持つ。ボードは場コードで選ぶので時刻表で引き直す */
-        var tv = null;
-        venues().forEach(function (x) { if (x.name === v.name) tv = x; });
-        return tv ? { joCode: String(tv.joCode), raceNo: no } : null;
-      })
+      .then(function (j) { return selFromState(j && j.ok ? j.state : null); })
       .catch(function () { return null; });
+  }
+
+  /** コンソールのstate → ボードが選ぶべきレース。
+      GASから取った場合も、放送通知で届いた場合も同じ関数で解釈する（解釈が2か所に割れないように） */
+  function selFromState(s) {
+    if (!s || !s.venues || !s.venues.length) return null;
+    var v = s.venues[s.activeVenue || 0];
+    if (!v || !v.name) return null;
+    var no = +(s.currentRace || {})[v.name] || 0;
+    if (!no) return null;
+    /* コンソールは場を「名前」で持つ。ボードは場コードで選ぶので時刻表で引き直す */
+    var tv = null;
+    venues().forEach(function (x) { if (x.name === v.name) tv = x; });
+    return tv ? { joCode: String(tv.joCode), raceNo: no } : null;
   }
 
   /** 並びの保険経路。取れなければ空文字（失敗しても落とさない） */
@@ -136,6 +139,7 @@ var RaceCard = (function () {
     fetchTimetable: fetchTimetable,
     fetchNarabi: fetchNarabi,
     fetchConsoleRace: fetchConsoleRace,
+    selFromState: selFromState,
     findVenue: findVenue,
     findRace: findRace,
     carsOf: carsOf,

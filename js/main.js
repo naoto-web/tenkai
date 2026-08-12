@@ -6,7 +6,7 @@
 
   var stageEl, ridersEl, barsEl, panelEl, hintEl;
   var inputEl, applyBtn, resetBtn, sizeRange, sizeVal;
-  var venueSel, raceSel, reloadBtn, followChk, followDiffEl;
+  var venueSel, raceSel, reloadBtn, followChk, followDiffEl, nowRaceEl;
   var titleEl, titleMainEl, titleSubEl, dirEl, liveDot;
   var pendingRace = null;   // URLで指定されたレース（出走表の取得完了後に適用する）
 
@@ -286,16 +286,28 @@
     });
   }
 
-  /* ---------- 配信への追従（8/12） ----------
-     コンソールは発走・②切替に合わせて「操作中のレース」を自動で進めている（FB96・既定ON）。
-     ボードだけ手動のままだと、実際には12Rが走っているのに盤面は10Rのまま、という取り残しが起きる
-     （8/12の実機で発生）。ここを追従させると、①の出走表・③の出走表と予想帯・中央の展開図が
-     すべて同じレースに揃う。
+  /* ---------- 配信への追従（8/12・常時ONへ変更） ----------
+     **出走表と展開ボードのレースは常に一致させる**（Naoto確定）。
+     ボード側でレースを選ぶ用途は無いので、場・レース選択と追従チェックはUIから隠し、
+     コンソールの操作中レースにいつでも従う。
+
+     受け取り方は2経路：
+       ①放送通知（`live-sync-v1`）＝コンソールが保存した瞬間に届く。**出走表と同時に切り替わる**
+       ②5秒ごとのGAS読み取り＝通知が届かない環境でも必ず追いつく土台
+     ①だけだと、通知は「変化の瞬間」しか流れないため後から起動したボードが取り残される
+     （③オーバーレイで実際に踏んだ罠と同じ）。②が土台、①が速度。
 
      ⚠️追従でレースが変わると盤面の配置は組み直される（＝手で動かした隊列は消える）。
-        実況の途中で飛ばされたくないときのために、手で場・レースを選んだら追従は自動で外れる。
-        戻したいときはチェックを入れ直す */
-  function isFollowing() { return !!(followChk && followChk.checked); }
+        レースが変わる＝解説対象が変わるタイミングなので、組み直しが正しい。
+
+     緊急時のみ `?follow=0` で手動モード（場・レース選択が現れる）。通常は使わない */
+  var FOLLOW_MODE = true;
+  try { FOLLOW_MODE = new URLSearchParams(location.search).get('follow') !== '0'; } catch (e) {}
+
+  function isFollowing() {
+    if (FOLLOW_MODE) return true;
+    return !!(followChk && followChk.checked);
+  }
 
   function setFollowing(on, why) {
     if (!followChk || followChk.checked === on) return;
@@ -316,23 +328,44 @@
     followDiffEl.hidden = false;
   }
 
+  /** コンソールのレースを盤面に反映する。放送通知とGAS読み取りの共通の受け口 */
+  function applyConsoleSel(sel) {
+    if (!sel) return;
+    if (!isFollowing()) { showFollowDiff(sel); return; }
+    /* すでに同じレースなら何もしない＝盤面を毎回作り直さない */
+    var cur = State.data.sel;
+    if (cur && String(cur.joCode) === sel.joCode && +cur.raceNo === sel.raceNo) { showFollowDiff(sel); return; }
+    var v = RaceCard.findVenue(sel.joCode);
+    if (!v || !RaceCard.findRace(v, sel.raceNo)) return; // 時刻表にまだ無い＝次の巡回で拾う
+    venueSel.value = sel.joCode;
+    populateRaces();
+    raceSel.value = String(sel.raceNo);
+    applySelectedRace(true);
+    showFollowDiff(sel);
+  }
+
   function followTick() {
     if (!RaceCard.enabled()) return;
-    /* 追従OFFでもコンソールは読む＝ズレていることを知らせるため（負荷は5秒に1回の読取のみ） */
-    RaceCard.fetchConsoleRace().then(function (sel) {
-      if (!sel) return;
-      if (!isFollowing()) { showFollowDiff(sel); return; }
-      /* すでに同じレースなら何もしない＝盤面を毎回作り直さない */
-      var cur = State.data.sel;
-      if (cur && String(cur.joCode) === sel.joCode && +cur.raceNo === sel.raceNo) { showFollowDiff(sel); return; }
-      var v = RaceCard.findVenue(sel.joCode);
-      if (!v || !RaceCard.findRace(v, sel.raceNo)) return; // 時刻表にまだ無い＝次の巡回で拾う
-      venueSel.value = sel.joCode;
-      populateRaces();
-      raceSel.value = String(sel.raceNo);
-      applySelectedRace(true);
-      showFollowDiff(sel);
-    });
+    /* 追従OFF（?follow=0）でもコンソールは読む＝ズレていることを知らせるため */
+    RaceCard.fetchConsoleRace().then(applyConsoleSel);
+  }
+
+  /* 放送通知の経路＝コンソールが保存した瞬間に届く。これで**出走表と同時に**切り替わる。
+     stagekitのsync.jsが流しているのと同じチャンネル名。
+
+     ⚠️必ず聞き専にすること。あちらのオーバーレイはpingにpongを返す作りなので、
+        ボードまで返すとコンソールの「オーバーレイ疎通テスト」が、
+        オーバーレイが1つも無くてもOKと出てしまう（診断が嘘をつく）。 */
+  function initConsoleChannel() {
+    if (VIEW !== 'control' || typeof BroadcastChannel === 'undefined') return;
+    try {
+      var ch = new BroadcastChannel('live-sync-v1');
+      ch.onmessage = function (ev) {
+        var m = ev.data || {};
+        if (m.type !== 'state' || !m.state) return;
+        applyConsoleSel(RaceCard.selFromState(m.state));
+      };
+    } catch (e) { /* 通知が使えなくても5秒巡回で追いつく */ }
   }
 
   /** 選んだレースの並び・選手名・車立てを盤面に反映する
@@ -386,6 +419,7 @@
     State.setRiders(result.positions);
     render();
 
+    if (nowRaceEl) nowRaceEl.textContent = RaceCard.labelOf(v, r);
     var msg = (auto ? '配信に追従　' : '') + RaceCard.labelOf(v, r) + ' → 並び ' + narabi;
     if (result.missing.length) {
       msg += '　／ 並びに無い ' + result.missing.join('・') + ' 番は盤面に出していません';
@@ -532,6 +566,9 @@
       if (new URLSearchParams(location.search).get('view') === 'output') VIEW = 'output';
     } catch (e) {}
     document.body.classList.add('view-' + VIEW);
+    /* 常時追従のときは場・レース選択と追従チェックを隠す＝ボードでレースを選ぶ操作は無い。
+       DOMには残す（コードから値を書き込むため）。?follow=0 のときだけ現れる */
+    if (FOLLOW_MODE) document.body.classList.add('follow-auto');
 
     stageEl   = document.getElementById('stage');
     ridersEl  = document.getElementById('riders');
@@ -548,6 +585,7 @@
     reloadBtn = document.getElementById('reload-btn');
     followChk = document.getElementById('follow-chk');
     followDiffEl = document.getElementById('follow-diff');
+    nowRaceEl = document.getElementById('now-race');
     titleEl     = document.getElementById('stage-title');
     titleMainEl = document.getElementById('stage-title-main');
     titleSubEl  = document.getElementById('stage-title-sub');
@@ -595,9 +633,10 @@
     if (VIEW === 'control') {
       loadTimetable(false);
       /* 配信への追従（8/12）。初回は時刻表の取得完了時に loadTimetable から1回走る
-         （場コードを引くのに時刻表が要るため）。以降は一定間隔。
+         （場コードを引くのに時刻表が要るため）。以降は一定間隔＝通知が届かなくても必ず追いつく土台。
          出力ビューは操作側から状態が流れてくるので追従しない＝GASを二重に叩かない */
       setInterval(followTick, CONFIG.FOLLOW_MS);
+      initConsoleChannel();   // 保存の瞬間に届く高速経路＝出走表と同時に切り替わる
       /* OBSのドックは開きっぱなしで使うので、1回しか取らないと確実に古くなる。
          実際、深夜に開いたドックが「並びが1本も無い」時点のリストを持ち続けて
          全レースが「並び未」に見える事故が起きた（8/12）。stagekitのオーバーレイに
