@@ -382,7 +382,32 @@
       sizeVal.textContent = (ratio * 100).toFixed(1) + '%';
     });
 
+    /* リセット＝「今の並びのまま、自動配置をやり直す」。
+       ドラッグで動かした分だけが取り消され、ラインは残る。
+       以前は lines・lineupText ごと空に戻していたので、実況中に押すと連結バーまで消えて
+       並びを入れ直すはめになっていた（8/12 Naoto指摘）。
+       基準にするのは「最後に適用された並び」＝ State.data.lines。
+       公式の並び予想か手入力かは問わない（手で直した並びを消さないため）。
+       公式の並びを取り直したいときは、場・レースを選び直せば再取得される */
     resetBtn.addEventListener('click', function () {
+      var d = State.data;
+
+      if (d.lines && d.lines.length) {
+        State.setRiders(Lineup.layout(d.lines, d.dir, d.iconRatio));
+        render();
+        setHint('並び ' + d.lines.map(function (l) { return l.join('-'); }).join(' / ') +
+                ' の初期配置に戻しました。');
+        return;
+      }
+
+      /* 並びがまだ無いレース（＝出走選手を横一列に置いた状態）は、その横一列に戻す */
+      if (d.raceCars && d.raceCars.length) {
+        showAllRaceCars(d.raceCars);
+        setHint('出走選手を横一列に戻しました。');
+        return;
+      }
+
+      /* レース未選択・並びも無い。ここだけは従来どおり丸ごと初期化 */
       State.reset();
       inputEl.value = '';
       render();
