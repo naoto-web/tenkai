@@ -583,6 +583,10 @@
       if (new URLSearchParams(location.search).get('view') === 'output') VIEW = 'output';
     } catch (e) {}
     document.body.classList.add('view-' + VIEW);
+    /* テスト用バックエンド接続中の目印。ヒント欄は配信画面から見えないので盤面にも出す。
+       ③の出走表とボードで別のバックエンドを掴むと「出走表8R・展開図6R」のズレが起きるため、
+       どちらがテストかを画面上で見分けられるようにしておく（8/12に実際に踏んだ） */
+    if (CONFIG.IS_TEST_BACKEND) document.body.classList.add('is-test');
     /* 常時追従のときは場・レース選択と追従チェックを隠す＝ボードでレースを選ぶ操作は無い。
        DOMには残す（コードから値を書き込むため）。?follow=0 のときだけ現れる */
     if (FOLLOW_MODE) document.body.classList.add('follow-auto');
