@@ -107,6 +107,19 @@ html, body {
   white-space: nowrap;
 }
 .btn:hover { background: #363d50; }
+
+/* 「配信に追従」＝既定ON。ONのあいだは枠を色付けて、今どちらのモードかひと目で分かるようにする
+   （実況中に「なぜ勝手にレースが変わった／変わらない」で迷わないため） */
+.chk {
+  display: flex; align-items: center; gap: 6px;
+  border: 1px solid var(--ui-border); border-radius: 6px;
+  padding: 7px 12px; font-size: 14px; white-space: nowrap; cursor: pointer;
+  color: var(--ui-muted);
+}
+.chk:has(input:checked) {
+  border-color: var(--ui-accent); color: var(--ui-text); background: rgba(74,144,255,.14);
+}
+.chk input { accent-color: var(--ui-accent); cursor: pointer; }
 .btn-primary {
   background: var(--ui-accent);
   border-color: var(--ui-accent);

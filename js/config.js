@@ -54,6 +54,11 @@ var CONFIG = (function () {
 
     STORAGE_KEY: 'keirin-tenkai-board-v1',
 
+    /* 配信（コンソール）のレースに追従する間隔。
+       コンソールは発走10秒前にシーンと予想レースを切り替えるので、
+       それに乗り遅れない程度に短く取る。GASはオーバーレイが既に5秒で叩いている */
+    FOLLOW_MS: 5000,
+
     /* 出走表・並び予想の取得先。
        OKL配信システム（stagekit）のGASバックエンドをそのまま読ませてもらっている。
        読み取り専用（action=timetable / action=narabi）。空文字にすればレース選択UIごと無効になる。 */

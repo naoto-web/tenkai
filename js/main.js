@@ -6,7 +6,7 @@
 
   var stageEl, ridersEl, barsEl, panelEl, hintEl;
   var inputEl, applyBtn, resetBtn, sizeRange, sizeVal;
-  var venueSel, raceSel, reloadBtn;
+  var venueSel, raceSel, reloadBtn, followChk;
   var titleEl, titleMainEl, titleSubEl, dirEl, liveDot;
   var pendingRace = null;   // URLで指定されたレース（出走表の取得完了後に適用する）
 
@@ -267,11 +267,14 @@
         pendingRace = null;
       }
 
+      followTick();   // 場コードは時刻表からしか引けないので、届いた直後に追従を1回回す
+
       if (silent) return;
       var races = 0;
       RaceCard.venues().forEach(function (v) { races += v.races.length; });
       setHint('出走表を取得しました（' + (tt && tt.date ? tt.date : '') + '・' +
-              RaceCard.venues().length + '場 ' + races + 'レース）。場とレースを選ぶと並びと選手名が入ります。');
+              RaceCard.venues().length + '場 ' + races + 'レース）。' +
+              (isFollowing() ? '配信のレースに自動で追従します。' : '場とレースを選ぶと並びと選手名が入ります。'));
     }).catch(function (e) {
       if (silent) return;
       setHint('出走表の取得に失敗しました：' + ((e && e.message) || e) +
@@ -281,8 +284,42 @@
     });
   }
 
-  /** 選んだレースの並び・選手名・車立てを盤面に反映する */
-  function applySelectedRace() {
+  /* ---------- 配信への追従（8/12） ----------
+     コンソールは発走・②切替に合わせて「操作中のレース」を自動で進めている（FB96・既定ON）。
+     ボードだけ手動のままだと、実際には12Rが走っているのに盤面は10Rのまま、という取り残しが起きる
+     （8/12の実機で発生）。ここを追従させると、①の出走表・③の出走表と予想帯・中央の展開図が
+     すべて同じレースに揃う。
+
+     ⚠️追従でレースが変わると盤面の配置は組み直される（＝手で動かした隊列は消える）。
+        実況の途中で飛ばされたくないときのために、手で場・レースを選んだら追従は自動で外れる。
+        戻したいときはチェックを入れ直す */
+  function isFollowing() { return !!(followChk && followChk.checked); }
+
+  function setFollowing(on, why) {
+    if (!followChk || followChk.checked === on) return;
+    followChk.checked = on;
+    if (why) setHint(why);
+  }
+
+  function followTick() {
+    if (!isFollowing() || !RaceCard.enabled()) return;
+    RaceCard.fetchConsoleRace().then(function (sel) {
+      if (!sel || !isFollowing()) return;
+      /* すでに同じレースなら何もしない＝盤面を毎回作り直さない */
+      var cur = State.data.sel;
+      if (cur && String(cur.joCode) === sel.joCode && +cur.raceNo === sel.raceNo) return;
+      var v = RaceCard.findVenue(sel.joCode);
+      if (!v || !RaceCard.findRace(v, sel.raceNo)) return; // 時刻表にまだ無い＝次の巡回で拾う
+      venueSel.value = sel.joCode;
+      populateRaces();
+      raceSel.value = String(sel.raceNo);
+      applySelectedRace(true);
+    });
+  }
+
+  /** 選んだレースの並び・選手名・車立てを盤面に反映する
+      @param {boolean} auto 追従による自動適用（ヒント欄に出所を書く） */
+  function applySelectedRace(auto) {
     var v = RaceCard.findVenue(venueSel.value);
     var r = RaceCard.findRace(v, raceSel.value);
     if (!v || !r) return;
@@ -297,13 +334,13 @@
       titleSub: [v.grade, r.cls, r.lineType].filter(Boolean).join('・')
     });
 
-    if (r.narabi) { applyRaceNarabi(r.narabi, v, r); return; }
+    if (r.narabi) { applyRaceNarabi(r.narabi, v, r, auto); return; }
 
     /* タイムテーブル側に並びが無いレースがある（本日は72中14）。保険経路を叩く */
     showAllRaceCars(raceCars);
     setHint(RaceCard.labelOf(v, r) + '：並び予想が未公開です。別経路で取得を試みています…');
     RaceCard.fetchNarabi(v.joCode, r.no).then(function (nb) {
-      if (nb) { applyRaceNarabi(nb, v, r); return; }
+      if (nb) { applyRaceNarabi(nb, v, r, auto); return; }
       setHint(RaceCard.labelOf(v, r) +
               '：並び予想がまだ出ていません。出走選手を横一列に並べたので、並び欄に手で入力してください。', true);
     });
@@ -318,7 +355,7 @@
     render();
   }
 
-  function applyRaceNarabi(narabi, v, r) {
+  function applyRaceNarabi(narabi, v, r, auto) {
     var d = State.data;
     var pool = (d.raceCars && d.raceCars.length) ? d.raceCars : null;
     var result = Lineup.apply(narabi, pool, d.dir, d.iconRatio);
@@ -331,7 +368,7 @@
     State.setRiders(result.positions);
     render();
 
-    var msg = RaceCard.labelOf(v, r) + ' → 並び ' + narabi;
+    var msg = (auto ? '配信に追従　' : '') + RaceCard.labelOf(v, r) + ' → 並び ' + narabi;
     if (result.missing.length) {
       msg += '　／ 並びに無い ' + result.missing.join('・') + ' 番は盤面に出していません';
     }
@@ -364,11 +401,21 @@
   function bindControls() {
     applyBtn.addEventListener('click', applyLineup);
 
+    /* 手でレースを選んだら追従を外す＝実況の途中で勝手に飛ばされないようにするため。
+       戻したいときはチェックを入れ直す（入れた瞬間に現在レースへ合わせる） */
     venueSel.addEventListener('change', function () {
+      setFollowing(false);
       populateRaces();
       applySelectedRace();
     });
-    raceSel.addEventListener('change', applySelectedRace);
+    raceSel.addEventListener('change', function () {
+      setFollowing(false);
+      applySelectedRace();   // ⚠️addEventListenerに直接渡すとEventがauto扱いになるので包む
+    });
+    followChk.addEventListener('change', function () {
+      if (followChk.checked) { setHint('配信に追従します。'); followTick(); }
+      else setHint('追従を外しました。場とレースは手動のままになります。');
+    });
     reloadBtn.addEventListener('click', function () { loadTimetable(true); });
 
     inputEl.addEventListener('keydown', function (ev) {
@@ -475,6 +522,7 @@
     venueSel  = document.getElementById('venue-select');
     raceSel   = document.getElementById('race-select');
     reloadBtn = document.getElementById('reload-btn');
+    followChk = document.getElementById('follow-chk');
     titleEl     = document.getElementById('stage-title');
     titleMainEl = document.getElementById('stage-title-main');
     titleSubEl  = document.getElementById('stage-title-sub');
@@ -521,6 +569,10 @@
        出力ビューは操作側から状態が流れてくるので、自分では取りにいかない（GASへの無駄打ち防止） */
     if (VIEW === 'control') {
       loadTimetable(false);
+      /* 配信への追従（8/12）。初回は時刻表の取得完了時に loadTimetable から1回走る
+         （場コードを引くのに時刻表が要るため）。以降は一定間隔。
+         出力ビューは操作側から状態が流れてくるので追従しない＝GASを二重に叩かない */
+      setInterval(followTick, CONFIG.FOLLOW_MS);
       /* OBSのドックは開きっぱなしで使うので、1回しか取らないと確実に古くなる。
          実際、深夜に開いたドックが「並びが1本も無い」時点のリストを持ち続けて
          全レースが「並び未」に見える事故が起きた（8/12）。stagekitのオーバーレイに

@@ -33,6 +33,30 @@ var RaceCard = (function () {
       });
   }
 
+  /** コンソール（OKL配信システム）が今どのレースを出しているかを読む。**読み取り専用**。
+      ①トークの出走表・②の予想帯が見ているのと同じ「操作中の場＋そのレース」を返す。
+      コンソール側は発走・②切替に合わせてここを自動で進めている（FB96・既定ON）ので、
+      これに追従すればボードも手を触れずに現在レースへ揃う。
+      @returns {Promise<{joCode:string, raceNo:number}|null>} 取れなければ null */
+  function fetchConsoleRace() {
+    if (!enabled()) return Promise.resolve(null);
+    return fetch(CONFIG.GAS_URL + '?action=state', { redirect: 'follow' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        var s = j && j.ok && j.state;
+        if (!s || !s.venues || !s.venues.length) return null;
+        var v = s.venues[s.activeVenue || 0];
+        if (!v || !v.name) return null;
+        var no = +(s.currentRace || {})[v.name] || 0;
+        if (!no) return null;
+        /* コンソールは場を「名前」で持つ。ボードは場コードで選ぶので時刻表で引き直す */
+        var tv = null;
+        venues().forEach(function (x) { if (x.name === v.name) tv = x; });
+        return tv ? { joCode: String(tv.joCode), raceNo: no } : null;
+      })
+      .catch(function () { return null; });
+  }
+
   /** 並びの保険経路。取れなければ空文字（失敗しても落とさない） */
   function fetchNarabi(joCode, raceNo) {
     if (!enabled()) return Promise.resolve('');
@@ -111,6 +135,7 @@ var RaceCard = (function () {
     venues: venues,
     fetchTimetable: fetchTimetable,
     fetchNarabi: fetchNarabi,
+    fetchConsoleRace: fetchConsoleRace,
     findVenue: findVenue,
     findRace: findRace,
     carsOf: carsOf,
