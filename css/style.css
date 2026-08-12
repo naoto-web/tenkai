@@ -120,6 +120,14 @@ html, body {
   border-color: var(--ui-accent); color: var(--ui-text); background: rgba(74,144,255,.14);
 }
 .chk input { accent-color: var(--ui-accent); cursor: pointer; }
+
+/* 追従OFFで配信とズレているときだけ出る警告。押すとその場で追い付く（＝復帰も1クリック） */
+.diff {
+  border: 1px solid #d9534f; background: rgba(217,83,79,.18); color: #ff9a97;
+  border-radius: 6px; padding: 7px 12px; font-size: 14px; font-weight: 600;
+  white-space: nowrap; cursor: pointer;
+}
+.diff:hover { background: rgba(217,83,79,.3); color: #ffc9c7; }
 .btn-primary {
   background: var(--ui-accent);
   border-color: var(--ui-accent);

@@ -6,7 +6,7 @@
 
   var stageEl, ridersEl, barsEl, panelEl, hintEl;
   var inputEl, applyBtn, resetBtn, sizeRange, sizeVal;
-  var venueSel, raceSel, reloadBtn, followChk;
+  var venueSel, raceSel, reloadBtn, followChk, followDiffEl;
   var titleEl, titleMainEl, titleSubEl, dirEl, liveDot;
   var pendingRace = null;   // URLで指定されたレース（出走表の取得完了後に適用する）
 
@@ -303,19 +303,35 @@
     if (why) setHint(why);
   }
 
+  /** 追従OFFのあいだ「配信は今どこか」を出す。
+      OFFにしたこと自体は本人の操作だが、そのまま忘れて盤面だけ取り残される事故が起きる
+      （8/12実機＝出走表は松山3R・盤面は松山2Rのまま）。ズレているときだけ赤く出す */
+  function showFollowDiff(sel) {
+    if (!followDiffEl) return;
+    var cur = State.data.sel;
+    var same = !sel || (cur && String(cur.joCode) === sel.joCode && +cur.raceNo === sel.raceNo);
+    if (isFollowing() || same || !sel) { followDiffEl.textContent = ''; followDiffEl.hidden = true; return; }
+    var v = RaceCard.findVenue(sel.joCode);
+    followDiffEl.textContent = '配信は ' + (v ? v.name : '') + ' ' + sel.raceNo + 'R';
+    followDiffEl.hidden = false;
+  }
+
   function followTick() {
-    if (!isFollowing() || !RaceCard.enabled()) return;
+    if (!RaceCard.enabled()) return;
+    /* 追従OFFでもコンソールは読む＝ズレていることを知らせるため（負荷は5秒に1回の読取のみ） */
     RaceCard.fetchConsoleRace().then(function (sel) {
-      if (!sel || !isFollowing()) return;
+      if (!sel) return;
+      if (!isFollowing()) { showFollowDiff(sel); return; }
       /* すでに同じレースなら何もしない＝盤面を毎回作り直さない */
       var cur = State.data.sel;
-      if (cur && String(cur.joCode) === sel.joCode && +cur.raceNo === sel.raceNo) return;
+      if (cur && String(cur.joCode) === sel.joCode && +cur.raceNo === sel.raceNo) { showFollowDiff(sel); return; }
       var v = RaceCard.findVenue(sel.joCode);
       if (!v || !RaceCard.findRace(v, sel.raceNo)) return; // 時刻表にまだ無い＝次の巡回で拾う
       venueSel.value = sel.joCode;
       populateRaces();
       raceSel.value = String(sel.raceNo);
       applySelectedRace(true);
+      showFollowDiff(sel);
     });
   }
 
@@ -415,8 +431,14 @@
       applySelectedRace();   // ⚠️addEventListenerに直接渡すとEventがauto扱いになるので包む
     });
     followChk.addEventListener('change', function () {
-      if (followChk.checked) { setHint('配信に追従します。'); followTick(); }
+      if (followChk.checked) { setHint('配信に追従します。'); showFollowDiff(null); followTick(); }
       else setHint('追従を外しました。場とレースは手動のままになります。');
+    });
+    /* 警告そのものが復帰ボタン＝ズレに気づいた瞬間に1クリックで追い付ける */
+    followDiffEl.addEventListener('click', function () {
+      setFollowing(true, '配信に追従します。');
+      showFollowDiff(null);
+      followTick();
     });
     reloadBtn.addEventListener('click', function () { loadTimetable(true); });
 
@@ -525,6 +547,7 @@
     raceSel   = document.getElementById('race-select');
     reloadBtn = document.getElementById('reload-btn');
     followChk = document.getElementById('follow-chk');
+    followDiffEl = document.getElementById('follow-diff');
     titleEl     = document.getElementById('stage-title');
     titleMainEl = document.getElementById('stage-title-main');
     titleSubEl  = document.getElementById('stage-title-sub');
