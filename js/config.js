@@ -27,7 +27,7 @@ var CONFIG = (function () {
     /* アイコン径 / ステージ幅 の比率 */
     ICON_RATIO_MIN: 0.035,
     ICON_RATIO_MAX: 0.140,
-    ICON_RATIO_DEFAULT: 0.076,
+    ICON_RATIO_DEFAULT: 0.050,   // 8/12 Naoto指定（③の穴 960×572 に9車が余裕をもって入る大きさ）
 
     /* ステージ内でアイコン中心が動ける範囲（正規化座標）
        maxY はインフィールドに落ちない位置で止める */
